@@ -16,23 +16,28 @@
 # along with vim-hdl.  If not, see <http://www.gnu.org/licenses/>.
 "Wrapper for vim-hdl usage within Vim's Python interpreter"
 
+import base64
+import json
+import logging
 import os
 import os.path as p
 import subprocess as subp
 import sys
-from multiprocessing import Queue
-import logging
 import time
+from multiprocessing import Queue
+from tempfile import mktemp
 
-import vim # pylint: disable=import-error
+import vim  # pylint: disable=import-error
 import vimhdl
 import vimhdl.vim_helpers as vim_helpers
-from vimhdl.base_requests import (RequestMessagesByPath, RequestQueuedMessages,
-                                  RequestHdlccInfo, RequestProjectRebuild,
-                                  OnBufferVisit, OnBufferLeave,
-                                  GetDependencies, GetBuildSequence)
+from vimhdl.base_requests import (BaseRequest, GetBuildSequence,
+                                  GetDependencies, OnBufferLeave,
+                                  OnBufferVisit, RequestHdlccInfo,
+                                  RequestMessagesByPath, RequestProjectRebuild,
+                                  RequestQueuedMessages)
 
 _ON_WINDOWS = sys.platform == 'win32'
+_HMAC_LENGTH = 16
 
 _logger = logging.getLogger(__name__)
 
@@ -123,6 +128,16 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
 
         vimhdl_path = p.abspath(p.join(p.dirname(__file__), '..', '..'))
 
+        hmac_key = os.urandom(_HMAC_LENGTH)
+        config_data = {'hmac_key': vim_helpers.toUnicode(base64.b64encode(hmac_key))}
+
+        self._logger.info("Config data is %s", repr(config_data))
+        config_file_path = mktemp()
+        json.dump(config_data, open(config_file_path, 'w'))
+
+        BaseRequest.hmac_key = hmac_key
+        BaseRequest.server_url = 'http://%s:%s' % (self._host, self._port)
+
         hdlcc_server = p.join(vimhdl_path, 'dependencies', 'hdlcc', 'hdlcc',
                               'hdlcc_server.py')
 
@@ -130,6 +145,7 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
                hdlcc_server,
                '--host', self._host,
                '--port', str(self._port),
+               '--config-file', config_file_path,
                '--stdout', '/tmp/hdlcc-stdout.log',
                '--stderr', '/tmp/hdlcc-stderr.log',
                '--attach-to-pid', str(os.getpid()),
@@ -159,7 +175,7 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
         """
         for _ in range(20):
             time.sleep(0.5)
-            request = RequestHdlccInfo(self._host, self._port)
+            request = RequestHdlccInfo()
             response = request.sendRequest()
             self._logger.debug(response)
             if response:
@@ -225,8 +241,7 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
         project_file = vim_helpers.getProjectFile()
         path = p.abspath(vim_buffer.name)
 
-        request = RequestMessagesByPath(host=self._host, port=self._port,
-                                        project_file=project_file, path=path)
+        request = RequestMessagesByPath(project_file=project_file, path=path)
 
         response = request.sendRequest()
         if response is None:
@@ -274,8 +289,7 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
 
         project_file = vim_helpers.getProjectFile()
 
-        request = RequestQueuedMessages(self._host, self._port,
-                                        project_file=project_file)
+        request = RequestQueuedMessages(project_file=project_file)
 
         request.sendRequestAsync(self._handleAsyncRequest)
 
@@ -284,8 +298,7 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
         Gets info about the current project and hdlcc server
         """
         project_file = vim_helpers.getProjectFile()
-        request = RequestHdlccInfo(host=self._host, port=self._port,
-                                   project_file=project_file)
+        request = RequestHdlccInfo(project_file=project_file)
 
         response = request.sendRequest()
 
@@ -313,8 +326,7 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
 
         vim_helpers.postVimInfo("Rebuilding project...")
         project_file = vim_helpers.getProjectFile()
-        request = RequestProjectRebuild(host=self._host, port=self._port,
-                                        project_file=project_file)
+        request = RequestProjectRebuild(project_file=project_file)
 
         response = request.sendRequest()
 
@@ -335,9 +347,7 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
 
         project_file = vim_helpers.getProjectFile()
 
-        request = OnBufferVisit(self._host,
-                                self._port,
-                                project_file=project_file,
+        request = OnBufferVisit(project_file=project_file,
                                 path=vim.current.buffer.name)
 
         request.sendRequestAsync(self._handleAsyncRequest)
@@ -354,9 +364,7 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
 
         project_file = vim_helpers.getProjectFile()
 
-        request = OnBufferLeave(self._host,
-                                self._port,
-                                project_file=project_file,
+        request = OnBufferLeave(project_file=project_file,
                                 path=vim.current.buffer.name)
 
         request.sendRequestAsync(self._handleAsyncRequest)
@@ -372,9 +380,7 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
 
         project_file = vim_helpers.getProjectFile()
 
-        request = GetDependencies(self._host,
-                                  self._port,
-                                  project_file=project_file,
+        request = GetDependencies(project_file=project_file,
                                   path=vim.current.buffer.name)
 
         response = request.sendRequest()
@@ -398,9 +404,7 @@ class VimhdlClient(object):  #pylint: disable=too-many-instance-attributes
 
         project_file = vim_helpers.getProjectFile()
 
-        request = GetBuildSequence(self._host,
-                                   self._port,
-                                   project_file=project_file,
+        request = GetBuildSequence(project_file=project_file,
                                    path=vim.current.buffer.name)
 
         response = request.sendRequest()

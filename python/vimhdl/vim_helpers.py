@@ -23,7 +23,7 @@ import vim                 # pylint: disable=import-error
 
 _logger = logging.getLogger(__name__)
 
-def _toUnicode(value):
+def toUnicode(value):
     """
     Returns a unicode type; either the new python-future str type or
     the real unicode type. The difference shouldn't matter.
@@ -44,7 +44,7 @@ def _escapeForVim(text):
     """
     Escape text for Vim.
     """
-    return _toUnicode(text.replace("'", "' . \"'\" .  '"))
+    return toUnicode(text.replace("'", "' . \"'\" .  '"))
 
 def toVimDict(obj, vim_variable):
     """
